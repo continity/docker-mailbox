@@ -77,6 +77,7 @@ def _need(mb: MailboxConfig, proto: str) -> None:
 
 
 _AUTH_EXEMPT_PATHS = frozenset({"/health"})
+_MCP_PATH = "/mcp"
 
 
 def _bearer_ok(cfg: Config, scope: Scope) -> bool:
@@ -139,6 +140,24 @@ class _BearerASGI:
         await self._app(scope, receive, send)
 
 
+class _MCPSlashNormalizer:
+    """Rewrite /mcp → /mcp/ so Starlette's Mount matches without a 307.
+
+    Mount("/mcp") compiles to /mcp/{path:path} and only matches /mcp/...
+    MCP clients (Claude Desktop, streamablehttp_client) POST /mcp and do
+    not follow the slash redirect.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope.get("path") == _MCP_PATH:
+            scope = dict(scope)
+            scope["path"] = _MCP_PATH + "/"
+        await self._app(scope, receive, send)
+
+
 def create_app(config: Config | None = None) -> FastAPI:
     cfg = config or _load_or_die()
     logging.basicConfig(
@@ -160,8 +179,11 @@ def create_app(config: Config | None = None) -> FastAPI:
         lifespan=_lifespan,
     )
 
-    app.router.routes.append(Mount("/mcp", app=mcp_manager.handle_request))
+    app.router.routes.append(Mount(_MCP_PATH, app=mcp_manager.handle_request))
 
+    # Innermost: rewrite /mcp → /mcp/ before the router. Auth stays outside
+    # so it still sees the path the client actually sent.
+    app.add_middleware(_MCPSlashNormalizer)
     app.add_middleware(_BearerASGI, cfg=cfg)
 
     @app.get("/health", response_model=HealthResponse)
