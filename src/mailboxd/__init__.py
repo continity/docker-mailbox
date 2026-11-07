@@ -1,3 +1,8 @@
 """mailboxd — multi-mailbox IMAP/SMTP control plane."""
 
-__version__ = "0.4.14"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("mailboxd")
+except PackageNotFoundError:
+    __version__ = "0.0.0+uninstalled"

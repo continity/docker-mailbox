@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 
@@ -11,6 +12,7 @@ from mailboxd.config import load_config
 from mailboxd.server import create_app
 
 _MCP_PATH = "/mcp"
+_MCP_PATH_WITH_TRAILING_SLASH = f"{_MCP_PATH}/"
 _JSONRPC_VERSION = "2.0"
 _SSE_DATA_PREFIX = "data: "
 _TEST_TOKEN = "test-token"
@@ -19,6 +21,11 @@ _HEADERS = {
     "Accept": "application/json, text/event-stream",
     "Content-Type": "application/json",
 }
+
+
+@pytest.fixture(autouse=True)
+def _state_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("MAILBOXD_STATE_PATH", str(tmp_path / "state.db"))
 
 
 def _client(tmp_path: Path) -> TestClient:
@@ -33,7 +40,10 @@ mailboxes:
     smtp: {{host: smtp.example.com, username: alpha@example.com, password: p,
       from_address: alpha@example.com}}
 """)
-    return TestClient(create_app(load_config(str(config_path))))
+    return TestClient(
+        create_app(load_config(str(config_path))),
+        follow_redirects=False,
+    )
 
 
 def _mcp_payload(response: Response) -> dict[str, Any]:
@@ -65,6 +75,38 @@ def _mcp_request(
     return _mcp_payload(response)
 
 
+def _initialize_request(client: TestClient, path: str) -> Response:
+    return client.post(
+        path,
+        headers=_HEADERS,
+        json={
+            "jsonrpc": _JSONRPC_VERSION,
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "mailboxd-test", "version": "1"},
+            },
+        },
+    )
+
+
+def test_mcp_documented_path_is_not_redirected(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        response = _initialize_request(client, _MCP_PATH)
+
+    assert response.status_code == 200
+    assert "location" not in response.headers
+
+
+def test_mcp_trailing_slash_path_remains_available(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        response = _initialize_request(client, _MCP_PATH_WITH_TRAILING_SLASH)
+
+    assert response.status_code == 200
+
+
 def test_streamable_http_mcp_initializes_lists_tools_and_calls_mailboxes(
     tmp_path: Path,
 ) -> None:
@@ -91,15 +133,18 @@ def test_streamable_http_mcp_initializes_lists_tools_and_calls_mailboxes(
     assert initialized["result"]["serverInfo"]["name"] == "mailboxd"
     tool_names = {tool["name"] for tool in tools["result"]["tools"]}
     assert {"mailboxes", "inbox", "list_folders", "send"} <= tool_names
-    content = mailbox_result["result"]["content"]
-    assert json.loads(content[0]["text"]) == {
-        "mailboxes": [
-            {
-                "name": "alpha",
-                "description": "Primary mailbox",
-                "address": "alpha@example.com",
-                "imap": True,
-                "smtp": True,
-            }
-        ]
-    }
+    result = mailbox_result["result"]
+    assert not result.get("isError")
+    content = json.loads(result["content"][0]["text"])
+    assert result["structuredContent"] == content
+    assert len(content["mailboxes"]) == 1
+    assert (
+        content["mailboxes"][0].items()
+        >= {
+            "name": "alpha",
+            "description": "Primary mailbox",
+            "address": "alpha@example.com",
+            "imap": True,
+            "smtp": True,
+        }.items()
+    )

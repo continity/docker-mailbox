@@ -1,6 +1,6 @@
 {
   "name": "mailbox",
-  "description": "Multi-mailbox IMAP/SMTP control plane exposed as a REST API and MCP server on a single port — read, search, send, mark-seen, and delete mail across multiple inboxes.",
+  "description": "Scoped IMAP/SMTP access over HTTP and MCP: read, organize, draft, reply and send mail.",
   "author": {
     "name": "psyb0t",
     "url": "https://github.com/psyb0t"
@@ -26,7 +26,8 @@
     "mailbox_token": {
       "type": "string",
       "title": "mailboxd bearer token",
-      "description": "Bearer token, only needed if the server was started with auth.tokens configured (sets MAILBOX_TOKEN).",
+      "description": "Bearer token matching the server's auth.tokens (sets MAILBOX_TOKEN).",
+      "required": true,
       "sensitive": true
     }
   }

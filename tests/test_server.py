@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from mailboxd import __version__
@@ -7,9 +8,16 @@ from mailboxd.config import load_config
 from mailboxd.server import create_app
 
 
+@pytest.fixture(autouse=True)
+def _state_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("MAILBOXD_STATE_PATH", str(tmp_path / "state.db"))
+
+
 def _client(tmp_path: Path) -> TestClient:
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text("""
+auth:
+  tokens: [EXAMPLE-DO-NOT-USE]
 mailboxes:
   - name: alpha
     description: "imap+smtp test mailbox"
@@ -19,7 +27,7 @@ mailboxes:
     smtp: {host: smtp.example.com, username: u, password: p, from_address: u@example.com}
 """)
     app = create_app(load_config(str(cfg_path)))
-    return TestClient(app)
+    return TestClient(app, headers={"Authorization": "Bearer EXAMPLE-DO-NOT-USE"})
 
 
 def test_health(tmp_path: Path) -> None:
